@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.4] - 2026-03-26
+
+Pull in airfrog_rpc 0.2.2.
+Up-rev various other crates.
+
 ## [0.2.3] - 2026-03-25
 
 Work around RP2350A2 stepping bootrom bug wheere EXIT_XIP is required before a flash erase in BOOTSEL mode: https://github.com/raspberrypi/pico-sdk/issues/2878

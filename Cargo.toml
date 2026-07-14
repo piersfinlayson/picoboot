@@ -1,6 +1,6 @@
 [package]
 name = "picoboot"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 description = "Communicating with Raspberry Pico/RP2040/RP2350 in BOOTSEL mode over USB"
@@ -23,15 +23,15 @@ logging = ["deku/logging"]
 reader = ["airfrog-rpc"]
 
 [dependencies]
-airfrog-rpc = { version = "0.1", optional = true }
+airfrog-rpc = { path="../airfrog-rpc", version = "^0.1.2", optional = true }
 deku = "0.20"
-log = "0.4"
-nusb = "0.2"
+log = "0.4.33"
+nusb = "0.2.4"
 rustix = "1.1"
 serde = { version = "1.0", features = ["serde_derive"] }
 thiserror = "2"
 
 [dev-dependencies]
 env_logger = "0.11"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }
 uf2-decode = "0.2"

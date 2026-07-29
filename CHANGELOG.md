@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.2.6] - 2026-??-??
+
+Fixed clippy warning on linux hosts.
+
 ## [0.2.5] - 2026-07-29
 
 `PicobootStatusCmd::get_status_code()` no longer panics on a status code this crate has no name for.  The code arrives from a device over the wire, so a host cannot assume it is well formed; an unrecognised one is now reported as `PicobootStatus::UnknownError`.  `is_ok()` went through the same `unwrap()` and so could panic too; it now compares the raw code.

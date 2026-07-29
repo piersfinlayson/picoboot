@@ -692,18 +692,12 @@ impl Connection {
                     true
                 }
                 Err(e) => match &e.kind() {
-                    NusbErrorKind::Other => {
-                        if e.os_error() == Some(rustix::io::Errno::NODATA.raw_os_error() as u32) {
-                            trace!(
-                                "Kernel driver not active for interface {if_num}, not detaching"
-                            );
-                            false
-                        } else {
-                            return Err(PicobootError::UsbDetachKernelDriverFailure(
-                                target.clone(),
-                                e,
-                            ));
-                        }
+                    NusbErrorKind::Other
+                        if e.os_error()
+                            == Some(rustix::io::Errno::NODATA.raw_os_error() as u32) =>
+                    {
+                        trace!("Kernel driver not active for interface {if_num}, not detaching");
+                        false
                     }
                     _ => {
                         return Err(PicobootError::UsbDetachKernelDriverFailure(

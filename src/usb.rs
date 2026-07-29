@@ -752,8 +752,8 @@ impl Connection {
     fn bulk_read(&mut self, buf_size: usize, check: bool) -> Result<Vec<u8>> {
         // nusb requires IN transfer sizes to be multiples of max packet size
         // Round up to the nearest multiple
-        let max_packet_size = self.in_ep_max_packet_size as usize;
-        let transfer_size = ((buf_size + max_packet_size - 1) / max_packet_size) * max_packet_size;
+        let max_packet_size = self.in_ep_max_packet_size;
+        let transfer_size = buf_size.div_ceil(max_packet_size) * max_packet_size;
 
         let buf = Buffer::new(transfer_size);
         let timeout = self.timeouts.endpoint;
@@ -1058,8 +1058,7 @@ impl Picoboot {
         let devices = nusb::list_devices()
             .await
             .inspect_err(|e| debug!("Failed to list USB devices: {e}"))
-            .map_err(|e| PicobootError::UsbEnumerationError(e))?
-            .into_iter()
+            .map_err(PicobootError::UsbEnumerationError)?
             .filter(|dev| {
                 targets
                     .iter()
@@ -1078,24 +1077,25 @@ impl Picoboot {
     /// Returns:
     /// - `Ok(())` - If connection is successfully established.
     pub async fn connect(&mut self) -> Result<&mut Connection> {
-        if self.connection.is_some() {
-            return Ok(self.connection.as_mut().unwrap());
+        if self.connection.is_none() {
+            self.connection = Some(
+                Connection::new(
+                    &self.device_info,
+                    self.target.clone(),
+                    self.if_num,
+                    self.out_ep,
+                    self.in_ep,
+                    self.in_ep_max_packet_size,
+                    self.timeouts.clone(),
+                )
+                .await?,
+            );
         }
 
-        self.connection = Some(
-            Connection::new(
-                &self.device_info,
-                self.target.clone(),
-                self.if_num,
-                self.out_ep,
-                self.in_ep,
-                self.in_ep_max_packet_size,
-                self.timeouts.clone(),
-            )
-            .await?,
-        );
-
-        Ok(self.connection.as_mut().unwrap())
+        Ok(self
+            .connection
+            .as_mut()
+            .expect("connection was just established"))
     }
 
     /// Disconnects the PICOBOOT connection
@@ -1183,9 +1183,9 @@ impl Picoboot {
     ///
     /// Args:
     /// - `addr` - Address to start the read. Must be on a multiple of
-    ///  [`Target::flash_page_size`].
+    ///   [`Target::flash_page_size`].
     /// - `size` - Number of bytes to read. Should be a multiple of
-    /// [`Target::flash_page_size`]. If not, it will be rejected.
+    ///   [`Target::flash_page_size`]. If not, it will be rejected.
     ///
     /// Returns:
     /// - `Ok(Vec<u8>)` - Buffer of data read from flash.
@@ -1256,10 +1256,10 @@ impl Picoboot {
     ///
     /// Args:
     /// - `addr` - Address to start the write. Must be on a multiple of
-    ///  [`Target::flash_page_size`].
+    ///   [`Target::flash_page_size`].
     /// - `buf` - Buffer of data to write to memory. Should be a multiple of
-    ///  [`Target::flash_page_size`]. If not, the remainder of the final page
-    ///  is zero-filled.
+    ///   [`Target::flash_page_size`]. If not, the remainder of the final page
+    ///   is zero-filled.
     ///
     /// Returns:
     /// - `Ok(())` - If write command is successfully sent.

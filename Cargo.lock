@@ -478,7 +478,7 @@ checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 
 [[package]]
 name = "picoboot"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "airfrog-rpc",
  "deku",

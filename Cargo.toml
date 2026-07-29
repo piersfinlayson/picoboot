@@ -1,6 +1,6 @@
 [package]
 name = "picoboot"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 description = "Communicating with Raspberry Pico/RP2040/RP2350 in BOOTSEL mode over USB"

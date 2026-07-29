@@ -41,7 +41,7 @@ impl Reader for PicobootReader {
             .ok_or_else(|| "Not connected".to_string())?;
 
         // For flash addresses, align reads to 256-byte page boundaries
-        let (read_addr, read_size, copy_offset) = if addr >= 0x1000_0000 && addr <= 0x1FFF_FFFF {
+        let (read_addr, read_size, copy_offset) = if (0x1000_0000..=0x1FFF_FFFF).contains(&addr) {
             let page_start = addr & !0xFF;
             let offset_in_page = (addr - page_start) as usize;
             let total_needed = offset_in_page + buf.len();

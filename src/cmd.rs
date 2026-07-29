@@ -105,7 +105,7 @@ impl PicobootCmdId {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum PicobootStatus {
     Ok = 0,
@@ -248,8 +248,28 @@ impl PicobootStatusCmd {
         self.token
     }
 
+    /// The status the device reported, as a known [`PicobootStatus`].
+    ///
+    /// A code this crate does not know is reported as
+    /// [`PicobootStatus::UnknownError`] rather than panicking: the value comes
+    /// off the wire from a device, so it is not something a host can assume is
+    /// well formed. Use [`Self::raw_status_code`] for the exact value, or
+    /// [`Self::try_status_code`] to tell a genuine `UnknownError` apart from a
+    /// code this crate has no name for.
     pub fn get_status_code(&self) -> PicobootStatus {
-        self.status_code.try_into().unwrap()
+        self.try_status_code()
+            .unwrap_or(PicobootStatus::UnknownError)
+    }
+
+    /// The status the device reported, or `None` if this crate has no name for
+    /// the code.
+    pub fn try_status_code(&self) -> Option<PicobootStatus> {
+        self.status_code.try_into().ok()
+    }
+
+    /// The status exactly as the device sent it, known to this crate or not.
+    pub fn raw_status_code(&self) -> u32 {
+        self.status_code
     }
 
     pub fn get_cmd_id(&self) -> u8 {
@@ -260,8 +280,12 @@ impl PicobootStatusCmd {
         self.in_progress
     }
 
+    /// Whether the device reported success.
+    ///
+    /// Compares the raw code, so an unrecognised status is correctly *not*
+    /// success rather than being mapped through a name first.
     pub fn is_ok(&self) -> bool {
-        self.get_status_code().is_ok()
+        self.status_code == PicobootStatus::Ok as u32
     }
 }
 
@@ -463,5 +487,43 @@ impl PicobootXCmd {
     /// otherwise.
     pub fn is_data_transfer(&self) -> bool {
         self.transfer_len != 0
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+    use deku::DekuContainerRead;
+
+    /// Build a status packet carrying `code`, as the device would send it.
+    fn status_with(code: u32) -> PicobootStatusCmd {
+        let mut bytes = [0u8; 16];
+        bytes[4..8].copy_from_slice(&code.to_le_bytes());
+        PicobootStatusCmd::from_bytes((&bytes, 0)).unwrap().1
+    }
+
+    /// A status code this crate has no name for must not panic. It arrives from
+    /// a device over the wire, so it cannot be assumed well formed.
+    #[test]
+    fn unknown_status_code_does_not_panic() {
+        for code in [18u32, 99, 0xFFFF_FFFF] {
+            let status = status_with(code);
+            assert_eq!(status.get_status_code(), PicobootStatus::UnknownError);
+            assert_eq!(status.try_status_code(), None);
+            assert_eq!(status.raw_status_code(), code);
+            assert!(!status.is_ok());
+        }
+    }
+
+    #[test]
+    fn known_status_codes_round_trip() {
+        let ok = status_with(PicobootStatus::Ok as u32);
+        assert!(ok.is_ok());
+        assert_eq!(ok.try_status_code(), Some(PicobootStatus::Ok));
+
+        let refused = status_with(PicobootStatus::NotPermitted as u32);
+        assert!(!refused.is_ok());
+        assert_eq!(refused.get_status_code(), PicobootStatus::NotPermitted);
+        assert_eq!(refused.raw_status_code(), 10);
     }
 }

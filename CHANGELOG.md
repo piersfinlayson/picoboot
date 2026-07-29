@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+`PicobootStatusCmd::get_status_code()` no longer panics on a status code this crate has no name for.  The code arrives from a device over the wire, so a host cannot assume it is well formed; an unrecognised one is now reported as `PicobootStatus::UnknownError`.  `is_ok()` went through the same `unwrap()` and so could panic too; it now compares the raw code.
+
+Adds `PicobootStatusCmd::try_status_code()`, returning `Option<PicobootStatus>` so a caller can tell a genuine `UnknownError` from a code with no name, and `raw_status_code()`, returning the value exactly as the device sent it.  `PicobootStatus` gains `PartialEq`/`Eq`.  All additive; no existing signature changed.
+
 ## [0.2.4] - 2026-03-26
 
 Pull in airfrog_rpc 0.2.2.

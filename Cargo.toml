@@ -23,7 +23,7 @@ logging = ["deku/logging"]
 reader = ["airfrog-rpc"]
 
 [dependencies]
-airfrog-rpc = { path="../airfrog-rpc", version = "^0.1.2", optional = true }
+airfrog-rpc = { version = "^0.1.2", optional = true }
 deku = "0.20"
 log = "0.4.33"
 nusb = "0.2.4"

@@ -14,6 +14,8 @@ dependencies = [
 [[package]]
 name = "airfrog-rpc"
 version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "963091b9cbaf881dadfd40afd79a130f066b9354e24709a716ec6d853ff90ebe"
 dependencies = [
  "async-trait",
  "log",

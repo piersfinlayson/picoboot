@@ -40,9 +40,6 @@ const DISABLE_MSD_INTERFACE: u32 = 0x01;
 const DISABLE_PICOBOOT_INTERFACE: u32 = 0x02;
 
 /// USB timeouts for PICOBOOT operations
-///
-/// Note that on Windows, the current version of `nusb` does not honour these
-/// timeouts, and instead uses the default WinUSB timeout of 5s.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Timeouts {
     /// Endpoint timeout duration
@@ -554,7 +551,7 @@ impl Connection {
     /// Issues a GET_COMMAND_STATUS control request to the device and returns
     /// the result.
     pub async fn get_command_status(&mut self) -> Result<PicobootStatusCmd> {
-        let timeout = std::time::Duration::from_secs(1);
+        let timeout = self.timeouts.command_status;
 
         // Build control request
         let if_num = self.interface.interface_number() as u16;

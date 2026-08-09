@@ -2,6 +2,14 @@
 
 ## [0.2.6] - 2026-??-??
 
+`Timeouts::command_status` is now honoured.  `get_command_status()` hard-coded
+a 1s timeout and ignored the field, so a caller raising it had no effect.  The
+default is unchanged at 1s.
+
+Dropped the note on `Timeouts` saying Windows ignores these timeouts.  nusb
+0.2.4 implemented control transfer timeouts on Windows, and this crate has
+required `nusb 0.2.4` since picoboot 0.2.4.
+
 Fixed clippy warning on linux hosts.
 
 ## [0.2.5] - 2026-07-29

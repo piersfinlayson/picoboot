@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.6] - 2026-??-??
+## [0.2.6] - 2026-08-27
 
 `Connection::reset_interface()` now asks the device which bulk endpoints are
 halted, with a standard `GET_STATUS`, instead of clearing only the endpoint

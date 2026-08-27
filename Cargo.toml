@@ -1,6 +1,6 @@
 [package]
 name = "picoboot"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 description = "Communicating with Raspberry Pico/RP2040/RP2350 in BOOTSEL mode over USB"
@@ -26,7 +26,7 @@ reader = ["airfrog-rpc"]
 airfrog-rpc = { version = "^0.1.2", optional = true }
 deku = "0.20"
 log = "0.4.33"
-nusb = "0.2.4"
+nusb = "0.2.5"
 rustix = "1.1"
 serde = { version = "1.0", features = ["serde_derive"] }
 thiserror = "2"

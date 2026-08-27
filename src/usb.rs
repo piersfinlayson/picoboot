@@ -8,7 +8,7 @@ use log::{debug, error, info, trace, warn};
 #[cfg(target_os = "linux")]
 use nusb::ErrorKind as NusbErrorKind;
 use nusb::descriptors::TransferType;
-use nusb::transfer::ControlType::Vendor;
+use nusb::transfer::ControlType::{Standard, Vendor};
 use nusb::transfer::{
     Buffer, Bulk, ControlIn, ControlOut, Direction as NusbDirection, In, Out, Recipient,
 };
@@ -24,6 +24,12 @@ use crate::{Access, Direction, Error as PicobootError, RebootType, Speed, Target
 
 type Error = PicobootError;
 type Result<T> = ::std::result::Result<T, Error>;
+
+// Standard USB GET_STATUS, and the bit an endpoint's answer sets when it is
+// halted.  See USB 2.0 sections 9.4.5 and 9.4.6.
+const REQUEST_GET_STATUS: u8 = 0x00;
+const ENDPOINT_STATUS_HALT: u8 = 0x01;
+const ENDPOINT_STATUS_LEN: u16 = 2;
 
 // USB class/subclass for PICOBOOT
 const PICOBOOT_USB_CLASS: u8 = 0xFF;
@@ -94,8 +100,6 @@ pub struct Connection {
     kernel_driver_detached: bool,
     timeouts: Timeouts,
     cmd_token: u32,
-    out_ep_stalled: bool,
-    in_ep_stalled: bool,
 }
 
 impl Drop for Connection {
@@ -136,8 +140,14 @@ impl Connection {
             }
         }
 
-        // Get the IN endpoint
-        if self.in_ep_stalled {
+        // Only a halt the device reports is cleared.
+        //
+        // CLEAR_FEATURE(ENDPOINT_HALT) also resets that endpoint's data toggle,
+        // so clearing one that was never halted puts the two ends out of step
+        // and the transfer after it is discarded as a repeat.  The device
+        // answers GET_STATUS on the control endpoint whatever state the bulk
+        // pair is in, so there is no need to guess from which transfers failed.
+        if self.endpoint_halted(self.in_ep).await {
             info!("Unstall IN endpoint");
             let mut in_ep: Endpoint<Bulk, In> = self
                 .interface
@@ -151,12 +161,10 @@ impl Connection {
                 .map_err(|e| {
                     PicobootError::UsbClearInEndpointHaltFailure(self.target.clone(), e)
                 })?;
-            self.in_ep_stalled = false;
         }
 
-        // Get the OUT endpoint
-        if self.out_ep_stalled {
-            trace!("Unstall OUT endpoint");
+        if self.endpoint_halted(self.out_ep).await {
+            info!("Unstall OUT endpoint");
             let mut out_ep: Endpoint<Bulk, Out> = self
                 .interface
                 .endpoint(self.out_ep)
@@ -642,6 +650,55 @@ impl Connection {
 
 // Internal methods
 impl Connection {
+    /// Asks the device whether one of its bulk endpoints is halted.
+    ///
+    /// A device that cannot answer is treated as having nothing halted, and
+    /// says so in the log.  Clearing a halt resets the endpoint's data toggle,
+    /// so clearing one on a guess costs a lost transfer, and GET_STATUS goes to
+    /// the control endpoint, which only stops answering when the device has
+    /// gone.
+    ///
+    /// Args:
+    /// - `addr` - Endpoint address, direction bit included.
+    ///
+    /// Returns:
+    /// - `true` - The device reports this endpoint halted.
+    async fn endpoint_halted(&self, addr: u8) -> bool {
+        let control_in = ControlIn {
+            control_type: Standard,
+            recipient: Recipient::Endpoint,
+            request: REQUEST_GET_STATUS,
+            value: 0,
+            index: u16::from(addr),
+            length: ENDPOINT_STATUS_LEN,
+        };
+        let timeout = self.timeouts.reset;
+        let status = {
+            #[cfg(target_os = "windows")]
+            {
+                self.interface.control_in(control_in, timeout).await
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                self.device.control_in(control_in, timeout).await
+            }
+        };
+
+        match status.as_deref() {
+            Ok([first, ..]) => first & ENDPOINT_STATUS_HALT != 0,
+            Ok(_) => {
+                info!(
+                    "Endpoint {addr:#04x} answered GET_STATUS with nothing - assuming not halted"
+                );
+                false
+            }
+            Err(e) => {
+                info!("Failed to get status of endpoint {addr:#04x} - assuming not halted: {e}");
+                false
+            }
+        }
+    }
+
     async fn new(
         device_info: &DeviceInfo,
         target: Target,
@@ -675,8 +732,6 @@ impl Connection {
             kernel_driver_detached,
             timeouts,
             cmd_token: 1,
-            out_ep_stalled: false,
-            in_ep_stalled: false,
         })
     }
 
@@ -762,10 +817,7 @@ impl Connection {
         let mut data = completion
             .into_result()
             .map(|buffer| buffer.into_vec())
-            .inspect_err(|e| {
-                debug!("Failed to read bulk data: {e}");
-                self.in_ep_stalled = true;
-            })
+            .inspect_err(|e| debug!("Failed to read bulk data: {e}"))
             .map_err(|e| PicobootError::UsbReadBulkFailure(self.target.clone(), e))?;
 
         if check && buf_size < actual_len {
@@ -798,10 +850,7 @@ impl Connection {
         let actual_len = completion.actual_len;
         completion
             .into_result()
-            .inspect_err(|e| {
-                debug!("Failed to write bulk data: {e}");
-                self.out_ep_stalled = true;
-            })
+            .inspect_err(|e| debug!("Failed to write bulk data: {e}"))
             .map_err(|e| PicobootError::UsbWriteBulkFailure(self.target.clone(), e))?;
 
         if check && actual_len != data.len() {

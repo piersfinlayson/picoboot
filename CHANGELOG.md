@@ -2,13 +2,25 @@
 
 ## [0.2.6] - 2026-??-??
 
+`Connection::reset_interface()` now asks the device which bulk endpoints are
+halted, with a standard `GET_STATUS`, instead of clearing only the endpoint
+whose transfer it saw fail.  A device refuses a command after it has accepted
+the write, so only the IN failure was ever recorded and the OUT halt went
+uncleared, which loses the first transfer after recovery.  Measured against a
+One ROM running firmware 0.7.1, the first read after a refusal went from 11 in
+40 to 32 in 40 on macOS, and 15 in 40 to 34 in 40 on Windows.
+
+Now requires `nusb 0.2.5`, up from 0.2.4, for its fix to a `control_in` memory
+leak on macOS.  `reset_interface()` makes two more control transfers per call
+than it used to, which made that leak worth closing.
+
 `Timeouts::command_status` is now honoured.  `get_command_status()` hard-coded
 a 1s timeout and ignored the field, so a caller raising it had no effect.  The
 default is unchanged at 1s.
 
 Dropped the note on `Timeouts` saying Windows ignores these timeouts.  nusb
 0.2.4 implemented control transfer timeouts on Windows, and this crate has
-required `nusb 0.2.4` since picoboot 0.2.4.
+required `nusb 0.2.4` or newer since picoboot 0.2.4.
 
 Fixed clippy warning on linux hosts.
 

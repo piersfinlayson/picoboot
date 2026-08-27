@@ -451,3 +451,69 @@ pub enum Error {
     #[error("Missing buffer for data transfer picobootx command on {0}: {1}")]
     PicobootXCmdDataMissing(Target, u8),
 }
+
+#[cfg(test)]
+mod target_tests {
+    use super::*;
+
+    /// The two known targets must not share geometry.  Both `flash_end()` and
+    /// `default_stack_pointer()` are hand-written matches, and the mistake they
+    /// invite is a copied arm that hands an RP2040 the RP2350's answer.
+    #[test]
+    fn known_targets_do_not_share_geometry() {
+        assert_ne!(Target::Rp2040.flash_end(), Target::Rp2350.flash_end());
+        assert_ne!(
+            Target::Rp2040.default_stack_pointer(),
+            Target::Rp2350.default_stack_pointer()
+        );
+        assert_ne!(Target::Rp2040.pid(), Target::Rp2350.pid());
+        assert_eq!(Target::Rp2040.vid(), Target::Rp2350.vid());
+    }
+
+    /// A custom target says it does not know its own size, and callers rely on
+    /// that: `Connection::reboot()` cannot serve one, which is why the
+    /// target-specific reboots exist.
+    #[test]
+    fn a_custom_target_admits_it_has_no_geometry() {
+        let t = Target::Custom {
+            vid: 0x1209,
+            pid: 0xf542,
+        };
+        assert_eq!(t.flash_end(), None);
+        assert_eq!(t.default_stack_pointer(), None);
+    }
+
+    /// A custom target reports the ids it was given, including when they happen
+    /// to be the standard pair.  Only `From<&DeviceInfo>` promotes those to a
+    /// known target, so a `Custom` built by hand must stay what it was built as.
+    #[test]
+    fn a_custom_target_reports_the_ids_it_was_given() {
+        for (vid, pid) in [(0x1209u16, 0xf542u16), (PICOBOOT_VID, PICOBOOT_PID_RP2350)] {
+            let t = Target::Custom { vid, pid };
+            assert_eq!(t.vid(), vid);
+            assert_eq!(t.pid(), pid);
+        }
+    }
+
+    /// Flash geometry has to hang together, because callers align erases to a
+    /// sector and writes to a page and the device refuses them if they do not.
+    #[test]
+    fn flash_geometry_hangs_together() {
+        assert_eq!(SECTOR_SIZE % PAGE_SIZE, 0);
+        for t in [Target::Rp2040, Target::Rp2350] {
+            let end = t.flash_end().expect("a known target knows its flash end");
+            assert!(end > t.flash_start());
+            assert_eq!((end - t.flash_start()) % t.flash_sector_size(), 0);
+            assert_eq!(t.flash_start() % t.flash_sector_size(), 0);
+        }
+    }
+
+    /// These three numbers go on the wire in an EXCLUSIVE_ACCESS command, so a
+    /// change here changes what the device does.
+    #[test]
+    fn access_modes_keep_their_wire_values() {
+        assert_eq!(u8::from(Access::NotExclusive), 0);
+        assert_eq!(u8::from(Access::Exclusive), 1);
+        assert_eq!(u8::from(Access::ExclusiveAndEject), 2);
+    }
+}

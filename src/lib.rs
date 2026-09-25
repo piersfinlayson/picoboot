@@ -50,6 +50,7 @@
 //! ## Crate Overview
 //!
 //! - High level APIs for common operations: reading/writing/erasing flash
+//!   and reading/writing RP2350 OTP
 //! - Low level APIs for sending/receiving PICOBOOT commands
 //! - Support for both RP2040 and RP2350 targets
 //! - Support for custom VID/PID targets (RP2040/RP2350 that have been OTP
@@ -325,6 +326,7 @@ pub enum RebootType {
 /// - USB errors - originating from the underlying `nusb` crate
 /// - PICOBOOT errors - originating from PICOBOOT device or protocol handling
 #[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// Hit error enumerating USB devices
     #[error("Error enumerating USB devices: {0}")]
@@ -428,6 +430,10 @@ pub enum Error {
     /// Read size invalid.
     #[error("Read size invalid on {0}: {1:#X}")]
     PicobootReadInvalidSize(Target, u32),
+
+    /// OTP range runs past the end of OTP.
+    #[error("OTP range invalid on {0}: {2} rows from row {1:#X}")]
+    PicobootOtpInvalidRange(Target, u16, usize),
 
     /// Failed to serialize PICOBOOT command for device.  Most likely an
     /// internal error.

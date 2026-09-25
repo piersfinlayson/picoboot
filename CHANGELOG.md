@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0] - 2026-??-??
+
+`Connection` can now read and write RP2350 OTP rows, with or without ECC,
+using:
+- `otp_read_ecc()`
+- `otp_read_raw()`
+- `otp_write_ecc()`
+- `otp_write_raw()`.
+
+Each returns the new `Error::PicobootOtpInvalidRange` without sending anything
+if a row is past the end of OTP.
+
+`Error` and `PicobootStatus` are now `#[non_exhaustive]`.  A `match` on either
+needs a wildcard arm.
+
+Now requires Rust 1.88, up from 1.85, for `slice::as_chunks`.
+
 ## [0.2.6] - 2026-08-27
 
 `Connection::reset_interface()` now asks the device which bulk endpoints are

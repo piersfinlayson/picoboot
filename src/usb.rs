@@ -15,7 +15,7 @@ use nusb::transfer::{
 use nusb::{Device, DeviceInfo, Endpoint, Interface};
 use std::time::Duration;
 
-use crate::cmd::{PicobootCmd, PicobootCmdId, PicobootStatusCmd, PicobootXCmd};
+use crate::cmd::{PicobootCmd, PicobootCmdId, PicobootStatusCmd, PicobootXCmd, otp_row_count};
 use crate::cmd::{REQUEST_GET_COMMAND_STATUS, REQUEST_RESET, RESPONSE_GET_COMMAND_STATUS_SIZE};
 use crate::{Access, Direction, Error as PicobootError, RebootType, Speed, Target};
 
@@ -551,6 +551,89 @@ impl Connection {
         Ok(())
     }
 
+    /// Reads OTP rows with ECC.  RP2350 only.
+    ///
+    /// - `row` - First row to read.
+    /// - `count` - Number of rows to read.
+    ///
+    /// An ECC read never reports bad data.  The hardware corrects one incorrect
+    /// bit in a row.  A row with more damage returns an incorrect value.  A row
+    /// written raw returns a meaningless value.  [`Self::otp_read_raw()`]
+    /// returns the stored bits.
+    ///
+    /// Returns:
+    /// - `Ok(Vec<u16>)` - One value per row.
+    /// - `Err(Error::PicobootOtpInvalidRange)` - A row is past the end of OTP.
+    ///   Nothing is sent.
+    pub async fn otp_read_ecc(&mut self, row: u16, count: u16) -> Result<Vec<u16>> {
+        let data = self.otp_read(row, count, true).await?;
+        let (rows, _) = data.as_chunks::<2>();
+        Ok(rows.iter().map(|b| u16::from_le_bytes(*b)).collect())
+    }
+
+    /// Reads raw OTP rows.  RP2350 only.
+    ///
+    /// - `row` - First row to read.
+    /// - `count` - Number of rows to read.
+    ///
+    /// Returns:
+    /// - `Ok(Vec<u32>)` - One 24-bit value per row.
+    /// - `Err(Error::PicobootOtpInvalidRange)` - A row is past the end of OTP.
+    ///   Nothing is sent.
+    pub async fn otp_read_raw(&mut self, row: u16, count: u16) -> Result<Vec<u32>> {
+        let data = self.otp_read(row, count, false).await?;
+        let (rows, _) = data.as_chunks::<4>();
+        Ok(rows.iter().map(|b| u32::from_le_bytes(*b)).collect())
+    }
+
+    /// Writes OTP rows with ECC.  RP2350 only.
+    ///
+    /// - `row` - First row to write.
+    /// - `values` - One value per row.
+    ///
+    /// The device refuses a locked row, and any value it can't store over the
+    /// bits already set.  After a refusal:
+    /// - the rows before the refused one stay written
+    /// - the call returns a USB error
+    /// - [`Self::get_command_status()`] gives the reason until the interface is
+    ///   reset
+    ///
+    /// A timeout can leave any of the rows written.
+    ///
+    /// A written row is not always refused.  Where its bits allow, the device
+    /// stores the new value inverted and the row then reads as the new value.
+    /// Writing 0 to a writable row always succeeds.  Only a raw read shows
+    /// whether a row is unwritten.
+    ///
+    /// The device does not check what it wrote.  To verify a row, read it raw
+    /// and compare it with the value's ECC encoding.
+    ///
+    /// Returns:
+    /// - `Err(Error::PicobootOtpInvalidRange)` - A row is past the end of OTP.
+    ///   Nothing is sent.
+    pub async fn otp_write_ecc(&mut self, row: u16, values: &[u16]) -> Result<()> {
+        let data: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+        self.otp_write(row, values.len(), true, &data).await
+    }
+
+    /// Writes raw OTP rows.  RP2350 only.
+    ///
+    /// - `row` - First row to write.
+    /// - `values` - One 24-bit value per row.  Bits 31–24 are ignored.
+    ///
+    /// A value must keep every bit already set in its row.  To set bits, read
+    /// the row and write it back with the bits added.  Refusals and timeouts
+    /// are as for [`Self::otp_write_ecc()`].  The device does not check what
+    /// it wrote.  Read the rows back to verify them.
+    ///
+    /// Returns:
+    /// - `Err(Error::PicobootOtpInvalidRange)` - A row is past the end of OTP.
+    ///   Nothing is sent.
+    pub async fn otp_write_raw(&mut self, row: u16, values: &[u32]) -> Result<()> {
+        let data: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+        self.otp_write(row, values.len(), false, &data).await
+    }
+
     /// Returns the target type of the connected PICOBOOT device
     pub fn target(&mut self) -> &Target {
         &self.target
@@ -650,6 +733,59 @@ impl Connection {
 
 // Internal methods
 impl Connection {
+    /// Sends an OTP_READ and returns its data.  A short read is an error rather
+    /// than fewer rows.
+    async fn otp_read(&mut self, row: u16, count: u16, ecc: bool) -> Result<Vec<u8>> {
+        self.refuse_rp2040(PicobootCmdId::OtpRead)?;
+        self.check_otp_range(row, usize::from(count))?;
+        debug!("Picoboot: Reading {count} OTP rows from row {row:#05x}, ecc={ecc}");
+
+        let cmd = PicobootCmd::otp_read(row, count, ecc);
+        let expected = cmd.get_transfer_len();
+        let data = self.send_cmd(cmd, None).await?;
+        if data.len() != expected {
+            debug!(
+                "OTP read returned {} bytes, expected {expected}",
+                data.len()
+            );
+            return Err(Error::UsbReadBulkMismatch(
+                self.target.clone(),
+                expected,
+                data.len(),
+            ));
+        }
+        Ok(data)
+    }
+
+    /// Sends an OTP_WRITE of `rows` rows carrying `data`.
+    async fn otp_write(&mut self, row: u16, rows: usize, ecc: bool, data: &[u8]) -> Result<()> {
+        self.refuse_rp2040(PicobootCmdId::OtpWrite)?;
+        let count = self.check_otp_range(row, rows)?;
+        debug!("Picoboot: Writing {count} OTP rows from row {row:#05x}, ecc={ecc}");
+
+        let _ = self
+            .send_cmd(PicobootCmd::otp_write(row, count, ecc), Some(data))
+            .await?;
+        Ok(())
+    }
+
+    /// Checks the range and returns its row count.
+    fn check_otp_range(&self, row: u16, rows: usize) -> Result<u16> {
+        otp_row_count(row, rows)
+            .ok_or_else(|| Error::PicobootOtpInvalidRange(self.target.clone(), row, rows))
+    }
+
+    /// Refuses a command an RP2040 does not have.
+    fn refuse_rp2040(&self, cmd: PicobootCmdId) -> Result<()> {
+        if self.target == Target::Rp2040 {
+            return Err(Error::PicobootCmdNotAllowedForTarget(
+                self.target.clone(),
+                cmd,
+            ));
+        }
+        Ok(())
+    }
+
     /// Asks the device whether one of its bulk endpoints is halted.
     ///
     /// A device that cannot answer is treated as having nothing halted, and

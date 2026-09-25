@@ -107,6 +107,7 @@ impl PicobootCmdId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
+#[non_exhaustive]
 pub enum PicobootStatus {
     Ok = 0,
     UnknownCmd = 1,
@@ -224,6 +225,49 @@ impl PicobootReboot2Cmd {
             delay,
             p0,
             p1,
+        };
+        c.to_bytes()
+            .unwrap()
+            .try_into()
+            .unwrap_or_else(|v: Vec<u8>| {
+                panic!("Expected a Vec of length {} but it was {}", 16, v.len())
+            })
+    }
+}
+
+/// Bytes per row in an OTP_READ or OTP_WRITE transfer.
+pub(crate) fn otp_row_bytes(ecc: bool) -> u32 {
+    if ecc { 2 } else { 4 }
+}
+
+/// Rows in RP2350 OTP.
+const OTP_ROWS: usize = 4096;
+
+/// The row count for `rows` rows from `row`, or `None` if they run past the
+/// end of OTP.
+pub(crate) fn otp_row_count(row: u16, rows: usize) -> Option<u16> {
+    let end = usize::from(row).checked_add(rows)?;
+    if end > OTP_ROWS {
+        return None;
+    }
+    u16::try_from(rows).ok()
+}
+
+#[derive(DekuRead, DekuWrite, Debug, Clone)]
+#[deku(endian = "little")]
+struct PicobootOtpCmd {
+    row: u16,
+    row_count: u16,
+    ecc: u8,
+    _unused: [u8; 11],
+}
+impl PicobootOtpCmd {
+    pub fn ser(row: u16, row_count: u16, ecc: bool) -> [u8; 16] {
+        let c = PicobootOtpCmd {
+            row,
+            row_count,
+            ecc: ecc.into(),
+            _unused: [0; 11],
         };
         c.to_bytes()
             .unwrap()
@@ -393,6 +437,20 @@ impl PicobootCmd {
     pub fn exit_xip() -> Self {
         PicobootCmd::new(PicobootCmdId::ExitXip, 0, 0, [0; 16])
     }
+
+    /// Creates an OTP_READ command
+    pub(crate) fn otp_read(row: u16, row_count: u16, ecc: bool) -> Self {
+        let args = PicobootOtpCmd::ser(row, row_count, ecc);
+        let transfer_len = u32::from(row_count) * otp_row_bytes(ecc);
+        PicobootCmd::new(PicobootCmdId::OtpRead, 5, transfer_len, args)
+    }
+
+    /// Creates an OTP_WRITE command
+    pub(crate) fn otp_write(row: u16, row_count: u16, ecc: bool) -> Self {
+        let args = PicobootOtpCmd::ser(row, row_count, ecc);
+        let transfer_len = u32::from(row_count) * otp_row_bytes(ecc);
+        PicobootCmd::new(PicobootCmdId::OtpWrite, 5, transfer_len, args)
+    }
 }
 
 /// Command structure for picobootx extended protocol.
@@ -525,5 +583,79 @@ mod status_tests {
         assert!(!refused.is_ok());
         assert_eq!(refused.get_status_code(), PicobootStatus::NotPermitted);
         assert_eq!(refused.raw_status_code(), 10);
+    }
+}
+
+#[cfg(test)]
+mod otp_tests {
+    use super::*;
+
+    /// A command as it goes on the wire.
+    fn wire(cmd: &PicobootCmd) -> Vec<u8> {
+        cmd.to_bytes().unwrap()
+    }
+
+    fn u16_at(bytes: &[u8], offset: usize) -> u16 {
+        u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+    }
+
+    fn u32_at(bytes: &[u8], offset: usize) -> u32 {
+        u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+    }
+
+    /// Offsets from RP2350 datasheet tables 467 (OTP_READ) and 468 (OTP_WRITE).
+    #[test]
+    fn otp_commands_match_the_datasheet_layout() {
+        for (cmd, id, ecc, row_bytes) in [
+            (PicobootCmd::otp_read(0x0c0, 4, true), 0x8c, 1, 2),
+            (PicobootCmd::otp_read(0x0c0, 4, false), 0x8c, 0, 4),
+            (PicobootCmd::otp_write(0x0c0, 4, true), 0x0d, 1, 2),
+            (PicobootCmd::otp_write(0x0c0, 4, false), 0x0d, 0, 4),
+        ] {
+            let bytes = wire(&cmd);
+            assert_eq!(bytes.len(), 32);
+            assert_eq!(u32_at(&bytes, 0x00), crate::PICOBOOT_MAGIC);
+            assert_eq!(bytes[0x08], id, "bCmdId");
+            assert_eq!(bytes[0x09], 5, "bCmdSize");
+            assert_eq!(u32_at(&bytes, 0x0c), 4 * row_bytes, "dTransferLength");
+            assert_eq!(u16_at(&bytes, 0x10), 0x0c0, "wRow");
+            assert_eq!(u16_at(&bytes, 0x12), 4, "wRowCount");
+            assert_eq!(bytes[0x14], ecc, "bEcc");
+            assert!(bytes[0x15..].iter().all(|&b| b == 0), "args past bEcc");
+        }
+    }
+
+    /// `send_cmd` picks the bulk endpoint from the command's direction.
+    #[test]
+    fn otp_read_is_in_and_otp_write_is_out() {
+        assert_eq!(PicobootCmd::otp_read(0, 1, true).direction(), Direction::In);
+        assert_eq!(
+            PicobootCmd::otp_write(0, 1, true).direction(),
+            Direction::Out
+        );
+    }
+
+    #[test]
+    fn the_largest_raw_read_does_not_overflow_the_transfer_length() {
+        let cmd = PicobootCmd::otp_read(0, u16::MAX, false);
+        assert_eq!(cmd.get_transfer_len(), usize::from(u16::MAX) * 4);
+    }
+
+    #[test]
+    fn a_range_inside_otp_gives_its_count() {
+        assert_eq!(otp_row_count(0, 4096), Some(4096));
+        assert_eq!(otp_row_count(0x0c0, 4), Some(4));
+        assert_eq!(otp_row_count(4095, 1), Some(1));
+        assert_eq!(otp_row_count(4096, 0), Some(0));
+    }
+
+    /// The bootrom refuses the same ranges, with `row + count > 4096`.
+    #[test]
+    fn a_range_past_the_last_row_gives_none() {
+        assert_eq!(otp_row_count(4095, 2), None);
+        assert_eq!(otp_row_count(0, 4097), None);
+        assert_eq!(otp_row_count(4097, 0), None);
+        assert_eq!(otp_row_count(0, usize::from(u16::MAX) + 1), None);
+        assert_eq!(otp_row_count(1, usize::MAX), None);
     }
 }

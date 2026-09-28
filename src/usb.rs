@@ -541,7 +541,9 @@ impl Connection {
 
     /// Exits Flash XIP (execute-in-place) mode.
     ///
-    /// Only functional on RP2040 devices - is a no-op on RP2350.
+    /// RP2040 requires it before a flash erase or write.  The RP2350
+    /// datasheet documents it as a no-op, but the RP2350 A2 bootrom requires
+    /// it too.  See [`Picoboot::flash_erase`].
     ///
     /// Returns:
     /// - `Ok(())` - If exit XIP command is successfully sent.
@@ -1404,6 +1406,17 @@ impl Picoboot {
             }
         }
 
+        // See flash_erase() for why EXIT_XIP comes first.
+        if flash {
+            trace!("Exit XIP");
+            if let Err(e) = conn.exit_xip().await {
+                if !was_connected {
+                    self.disconnect();
+                }
+                return Err(e);
+            }
+        }
+
         trace!("Writing memory");
         let write_fn = if flash {
             trace!("Writing flash");
@@ -1495,9 +1508,9 @@ impl Picoboot {
             }
         }
 
-        // There appears to be a bug in the RP2350 bootrom stepping where an
-        // EXIT_XIP is required before a flash erase, otherwise the erase
-        // fails silently (returns success, immediately).  See:
+        // The RP2350 A2 bootrom requires an EXIT_XIP before a flash erase or
+        // write, otherwise the command returns success having done nothing.
+        // See:
         // https://github.com/raspberrypi/pico-sdk/issues/2878
         //
         // EXIT_XIP is always required on RP2040 silicon.
@@ -1577,6 +1590,15 @@ impl Picoboot {
                 }
                 return Err(e);
             }
+        }
+
+        // See flash_erase() for why EXIT_XIP comes first.
+        trace!("Exit XIP");
+        if let Err(e) = conn.exit_xip().await {
+            if !was_connected {
+                self.disconnect();
+            }
+            return Err(e);
         }
 
         trace!("Erasing flash memory");

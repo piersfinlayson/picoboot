@@ -20,6 +20,8 @@ Now requires Rust 1.88, up from 1.85, for `slice::as_chunks`.
 `Picoboot::flash_erase_and_write()` and `Picoboot::flash_write()` now send
 EXIT_XIP first, as `flash_erase()` has since 0.2.3.  Without it an RP2350 A2
 erase or write returned success having done nothing due to an A2 bootrom bug.
+`Picoboot::flash_read()` and `PicobootReader::new()` also send it first on RP2350,
+where an A2 flash read returned zeros.
 
 ## [0.2.6] - 2026-08-27
 

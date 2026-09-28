@@ -4,7 +4,7 @@
 
 #![cfg(feature = "reader")]
 
-use crate::Picoboot;
+use crate::{Picoboot, Target};
 use airfrog_rpc::io::Reader;
 use log::debug;
 
@@ -14,19 +14,28 @@ use log::debug;
 /// offset arithmetic is required.
 pub struct PicobootReader {
     picoboot: Picoboot,
+    /// Whether the device is an RP2350, whose flash reads need an EXIT_XIP
+    /// after an interface reset.
+    rp2350: bool,
 }
 
 impl PicobootReader {
     /// Create a new PicobootReader, connecting to the device and resetting
     /// the interface ready for use.
     pub async fn new(mut picoboot: Picoboot) -> Result<Self, String> {
+        let rp2350 = *picoboot.target() == Target::Rp2350;
         let conn = picoboot.connect().await.map_err(|e| e.to_string())?;
         conn.reset_interface().await.map_err(|e| e.to_string())?;
+        // The RP2350 A2 bootrom returns zeros for a flash read until an
+        // EXIT_XIP.  See Picoboot::flash_read().
+        if rp2350 {
+            conn.exit_xip().await.map_err(|e| e.to_string())?;
+        }
         match conn.get_command_status().await {
             Ok(status) => debug!("PicobootReader: command status after reset: {:?}", status),
             Err(e) => debug!("PicobootReader: failed to get command status after reset: {e}"),
         }
-        Ok(Self { picoboot })
+        Ok(Self { picoboot, rp2350 })
     }
 }
 
@@ -59,6 +68,11 @@ impl Reader for PicobootReader {
             Err(e) => {
                 debug!("Error reading from device: {e}");
                 conn.reset_interface().await.map_err(|e| e.to_string())?;
+                // A reset during a command aborts the flash on RP2350, so
+                // later reads need another EXIT_XIP.
+                if self.rp2350 {
+                    conn.exit_xip().await.map_err(|e| e.to_string())?;
+                }
                 Err(e.to_string())
             }
         }

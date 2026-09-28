@@ -1320,6 +1320,13 @@ impl Picoboot {
             self.connect().await?;
         }
 
+        // The RP2350 A2 bootrom returns zeros for a flash read until an
+        // EXIT_XIP, as it does nothing for an erase or write (see
+        // flash_erase()).  Whether an RP2040 flash read works after EXIT_XIP
+        // hasn't been tested, so it's sent on RP2350 only.  PicobootReader
+        // does the same.
+        let exit_xip = flash && self.target == Target::Rp2350;
+
         trace!("Connected to PICOBOOT device for flash read");
         let conn = self.connection.as_mut().unwrap();
 
@@ -1327,6 +1334,16 @@ impl Picoboot {
         match conn.reset_interface().await {
             Ok(()) => {}
             Err(e) => {
+                if !was_connected {
+                    self.disconnect();
+                }
+                return Err(e);
+            }
+        }
+
+        if exit_xip {
+            trace!("Exit XIP");
+            if let Err(e) = conn.exit_xip().await {
                 if !was_connected {
                     self.disconnect();
                 }

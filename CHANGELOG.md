@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.3.0] - 2026-??-??
+## [0.3.0] - 2026-09-29
 
 `Connection` can now read and write RP2350 OTP rows, with or without ECC,
 using:

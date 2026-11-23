@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.4.0] - 2026-11-23
+
+USB support has moved to a new crate, [picoboot-nusb](https://crates.io/crates/picoboot-nusb),
+so that picoboot can be used over other connections, for example WiFi.
+
+To upgrade:
+- Add `picoboot-nusb` to your dependencies.  The `tokio` and `smol` features
+  are now in that crate.
+- Replace `Picoboot::from_first(None).await?` with
+  `Picoboot::new(UsbDevice::first(None).await?)?`.
+- Replace `Picoboot::list_devices()` with `UsbDevice::list()`.
+- Replace `serial_number()`, `product_string()` and similar with
+  `UsbDevice::device_info()`.
+- Replace `picoboot::usb::Timeouts` with `picoboot::Timeouts`.
+- Match `Error::Transport` instead of the `Usb*` errors, which have been
+  removed.
+
+Also:
+- Flash is written 4KB at a time, instead of 256 bytes.
+- Erasing a large area of flash no longer times out.
+- Added `RebootType::RamImage`, to reboot an RP2350 into an image in RAM.
+- Added `last_status()`, for the status of the last command that failed.
+
 ## [0.3.0] - 2026-09-29
 
 `Connection` can now read and write RP2350 OTP rows, with or without ECC,

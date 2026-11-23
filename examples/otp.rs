@@ -42,6 +42,7 @@
 
 use picoboot::cmd::PicobootStatus;
 use picoboot::{Connection, Error, Picoboot};
+use picoboot_nusb::{UsbDevice, UsbError};
 use std::ops::RangeInclusive;
 use std::time::Instant;
 
@@ -256,7 +257,8 @@ async fn run(serial: &str, command: Command) -> Result<(), String> {
         ));
     };
 
-    let mut picoboot = Picoboot::new(device).await.map_err(|e| e.to_string())?;
+    let device = UsbDevice::new(device).await.map_err(|e| e.to_string())?;
+    let mut picoboot = Picoboot::new(device).map_err(|e| e.to_string())?;
     let conn = picoboot.connect().await.map_err(|e| e.to_string())?;
     conn.reset_interface().await.map_err(|e| e.to_string())?;
     println!("Connected to {} {serial}", conn.target());
@@ -303,10 +305,7 @@ async fn run_op(conn: &mut Connection, op: Op) -> Result<(), String> {
             println!("{took}");
             // A refusal arrives as a stalled transfer.  The reason is in the
             // command status, which the next interface reset clears.
-            if matches!(
-                e,
-                Error::UsbReadBulkFailure(..) | Error::UsbWriteBulkFailure(..)
-            ) {
+            if stalled(&e) {
                 match conn.get_command_status().await {
                     Ok(status) => eprintln!(
                         "Device status: {} ({})",
@@ -461,6 +460,17 @@ async fn raw_write(
     check_write(conn, &what, start, result, expect).await
 }
 
+/// Whether `e` is a failed bulk transfer, which is how a refusal arrives.
+fn stalled(e: &Error) -> bool {
+    let Error::Transport(t) = e else {
+        return false;
+    };
+    matches!(
+        std::error::Error::source(t).and_then(|s| s.downcast_ref::<UsbError>()),
+        Some(UsbError::ReadBulk(..) | UsbError::WriteBulk(..))
+    )
+}
+
 async fn check_write(
     conn: &mut Connection,
     what: &str,
@@ -473,7 +483,7 @@ async fn check_write(
         Ok(()) => None,
         // A refusal arrives as a stalled transfer.  The reason is in the
         // command status, which the interface reset then clears.
-        Err(Error::UsbReadBulkFailure(..) | Error::UsbWriteBulkFailure(..)) => {
+        Err(e) if stalled(&e) => {
             let status = conn
                 .get_command_status()
                 .await

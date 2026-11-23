@@ -8,6 +8,7 @@
 //! Based on an original example from `picoboot-rs`.
 
 use picoboot::{Access, Error, Picoboot};
+use picoboot_nusb::UsbDevice;
 use std::path::Path;
 
 // Delay to use when rebooting the device
@@ -42,7 +43,7 @@ async fn run(firmware_path: &Path) -> Result<(), Error> {
     // Create Picoboot object - this will find the first connected device with
     // an RP2040 or RP2350 stock VID/PID in BOOTSEL mode
     println!("Discovering device...");
-    let mut picoboot = Picoboot::from_first(None).await?;
+    let mut picoboot = Picoboot::new(UsbDevice::first(None).await?)?;
 
     // Connect to the device
     println!("Connecting to device...");

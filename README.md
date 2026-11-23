@@ -1,12 +1,14 @@
 # picoboot-rs
 
-A crate for connecting to and communicating with RP2040/RP2350 microcontrollers using the PICOBOOT USB interface.
+A crate for connecting to and communicating with RP2040/RP2350 microcontrollers using the PICOBOOT interface.
+
+For USB, use [picoboot-nusb](./picoboot-nusb).
 
 picoboot-rs now supports the [picobootx](https://github.com/piersfinlayson/picobootx) picoboot extension library, which is a device side picoboot implementation that allows custom commands to be added to the picoboot protocol.
 
 ## Getting Started
 
-1. Use `Picoboot` to find a PICOBOOT device.
+1. Find a device, for example with `picoboot_nusb::UsbDevice`, and pass it to `Picoboot::new()`.
 
 2. Use `Picoboot::connect()` to connect to the device and get a `Connection`
 
@@ -16,11 +18,12 @@ picoboot-rs now supports the [picobootx](https://github.com/piersfinlayson/picob
 
 ```rust
 use picoboot::{Picoboot, Access, Error};
+use picoboot_nusb::UsbDevice;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     // Create connection to first RP2040/RP2350 found
-    let mut picoboot = Picoboot::from_first(None).await?;
+    let mut picoboot = Picoboot::new(UsbDevice::first(None).await?)?;
     let conn = picoboot.connect().await?;
 
     // Claim exclusive access, ejecting the BOOTSEL mass storage device and
@@ -45,7 +48,7 @@ See the [examples](./examples) directory for more complete examples.
 
 ## Notes
 
-When using this crate it is possible that further configuration for USB devices on the host machine may be required.
+When using picoboot-nusb it is possible that further configuration for USB devices on the host machine may be required.
 
 - When running on Linux , you may need to add some additional udev rules to allow your user to access the PICOBOOT USB . These udev rules can be found [here](https://github.com/raspberrypi/picotool/blob/master/udev/60-picotool.rules) unless they have been moved!
 

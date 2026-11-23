@@ -1,0 +1,27 @@
+[package]
+name = "picoboot-nusb"
+version = "0.1.0"
+edition = "2024"
+authors = ["Piers Finlayson <piers@piers.rocks>"]
+description = "USB transport for picoboot, using nusb"
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/piersfinlayson/picoboot"
+repository = "https://github.com/piersfinlayson/picoboot.git"
+keywords = ["raspberry-pi", "rp2040", "rp2350", "picoboot", "usb"]
+categories = ["embedded", "hardware-support"]
+readme = "../README.md"
+
+[features]
+default = ["tokio"]
+tokio = ["nusb/tokio"]
+smol = ["nusb/smol"]
+
+[dependencies]
+log = "0.4.33"
+nusb = "0.2.5"
+picoboot = { version = "0.4.0", path = "..", default-features = false }
+rustix = "1.1"
+thiserror = "2"
+
+[dev-dependencies]
+tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }

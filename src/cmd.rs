@@ -6,10 +6,6 @@ use deku::{DekuContainerWrite, DekuRead, DekuWrite};
 
 use crate::{Direction, PICOBOOT_MAGIC};
 
-pub(crate) const REQUEST_RESET: u8 = 0x41;
-pub(crate) const REQUEST_GET_COMMAND_STATUS: u8 = 0x42;
-pub(crate) const RESPONSE_GET_COMMAND_STATUS_SIZE: usize = 16;
-
 // see https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf
 // section 2.8.5 for details on PICOBOOT interface
 
@@ -287,6 +283,20 @@ pub struct PicobootStatusCmd {
     in_progress: u8,
     _unused: [u8; 6],
 }
+
+/// The 16 bytes of a GET_COMMAND_STATUS response.
+impl From<[u8; 16]> for PicobootStatusCmd {
+    fn from(b: [u8; 16]) -> Self {
+        Self {
+            token: u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+            status_code: u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
+            cmd_id: b[8],
+            in_progress: b[9],
+            _unused: [b[10], b[11], b[12], b[13], b[14], b[15]],
+        }
+    }
+}
+
 impl PicobootStatusCmd {
     pub fn get_token(&self) -> u32 {
         self.token
@@ -571,6 +581,17 @@ mod status_tests {
             assert_eq!(status.raw_status_code(), code);
             assert!(!status.is_ok());
         }
+    }
+
+    /// A transport outside this crate builds a status from the bytes without
+    /// deku, and must get what deku decodes.
+    #[test]
+    fn status_from_bytes_matches_deku() {
+        let bytes: [u8; 16] = core::array::from_fn(|i| i as u8 * 13 + 3);
+        let from = PicobootStatusCmd::from(bytes);
+        let deku = PicobootStatusCmd::from_bytes((&bytes, 0)).unwrap().1;
+        assert_eq!(from.to_bytes().unwrap(), deku.to_bytes().unwrap());
+        assert_eq!(from.get_token(), 0x2a1d_1003);
     }
 
     #[test]

@@ -4,7 +4,8 @@
 
 //! Discovers and lists PICOBOOT-compatible devices connected to the system.
 
-use picoboot::{Error, Picoboot};
+use picoboot::Error;
+use picoboot_nusb::UsbDevice;
 
 #[tokio::main]
 async fn main() {
@@ -19,7 +20,7 @@ async fn main() {
 async fn run() -> Result<(), Error> {
     // List all connected PICOBOOT devices
     println!("Discovering devices...");
-    let devices = Picoboot::list_devices(None).await?;
+    let devices = UsbDevice::list(None).await?;
 
     if devices.is_empty() {
         println!("No PICOBOOT devices found");

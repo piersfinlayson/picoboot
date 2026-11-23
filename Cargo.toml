@@ -1,9 +1,9 @@
 [package]
 name = "picoboot"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
-description = "Communicating with Raspberry Pico/RP2040/RP2350 in BOOTSEL mode over USB"
+description = "Communicating with Raspberry Pico/RP2040/RP2350 in BOOTSEL mode"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/piersfinlayson/picoboot"
 repository = "https://github.com/piersfinlayson/picoboot.git"
@@ -15,10 +15,11 @@ readme = "README.md"
 name = "picoboot"
 path = "src/lib.rs"
 
+[workspace]
+members = ["picoboot-nusb"]
+
 [features]
-default = ["tokio", "logging"]
-tokio = ["nusb/tokio"]
-smol = ["nusb/smol"]
+default = ["logging"]
 logging = ["deku/logging"]
 reader = ["airfrog-rpc"]
 
@@ -26,12 +27,13 @@ reader = ["airfrog-rpc"]
 airfrog-rpc = { version = "^0.1.2", optional = true }
 deku = "0.20"
 log = "0.4.33"
-nusb = "0.2.5"
-rustix = "1.1"
-serde = { version = "1.0", features = ["serde_derive"] }
 thiserror = "2"
 
 [dev-dependencies]
 env_logger = "0.11"
+# The otp example lists every USB device.
+nusb = { version = "0.2.5", features = ["tokio"] }
+# The examples and the documentation's examples find devices over USB.
+picoboot-nusb = { path = "picoboot-nusb" }
 tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }
 uf2-decode = "0.2"

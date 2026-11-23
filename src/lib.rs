@@ -5,13 +5,17 @@
 //! # picoboot
 //!
 //! A crate for connecting to and communicating with RP2040/RP2350
-//! microcontrollers using the PICOBOOT USB interface.
+//! microcontrollers using the PICOBOOT interface.
 //!
 //! Supports custom VID/PID targets and extensions to the PICOBOOT protocol.
 //!
+//! For USB, use [`picoboot-nusb`](https://crates.io/crates/picoboot-nusb).  For
+//! another connection, implement [`Transport`].
+//!
 //! ## Getting Started
 //!
-//! 1. Use [`Picoboot`] to find a PICOBOOT device.
+//! 1. Find a device, for example with `picoboot_nusb::UsbDevice`, and pass it
+//!    to [`Picoboot::new()`].
 //!
 //! 2. Use [`Picoboot::connect()`] to connect to the device and get a [`Connection`]
 //!
@@ -22,11 +26,12 @@
 //!
 //! ```rust,no_run
 //! use picoboot::{Picoboot, Access, Error};
+//! use picoboot_nusb::UsbDevice;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Error> {
 //!     // Create connection to first RP2040/RP2350 found
-//!     let mut picoboot = Picoboot::from_first(None).await?;
+//!     let mut picoboot = Picoboot::new(UsbDevice::first(None).await?)?;
 //!     let conn = picoboot.connect().await?;
 //!
 //!     // Claim exclusive access, ejecting the BOOTSEL mass storage device and
@@ -55,8 +60,7 @@
 //! - Support for both RP2040 and RP2350 targets
 //! - Support for custom VID/PID targets (RP2040/RP2350 that have been OTP
 //!   programmed)
-//! - Supports `async`/`await` using `tokio` and `smol` runtimes
-//! - Native Rust USB implementation using `nusb` - no `libusb` dependency
+//! - Supports `async`/`await`
 //! - Supports extensions to the PICOBOOT protocol using custom magics in
 //!   the header, and the [picobootx](https://github.com/piersfinlayson/picobootx)
 //!   device side implementation.
@@ -82,12 +86,8 @@
 //!
 //! ## Feature Flags
 //!
-//! Used to indicate the desired async runtime for `nusb`.
-//!
 //! ```toml
-//! default = ["tokio", "logging"]
-//! tokio = ["nusb/tokio"]
-//! smol = ["nusb/smol"]
+//! default = ["logging"]
 //! logging = ["deku/logging"]
 //! ```
 //!
@@ -100,7 +100,6 @@
 //! - additional, simplified APIs
 //! - stronger typing
 //! - async/await support
-//! - native Rust USB using `nusb`
 //! - safer serialization/deserialization using `deku`
 
 /// RP MCU memory address for the start of ROM storage
@@ -164,15 +163,20 @@ pub const UF2_RP2350_RISCV_FAMILY_ID: u32 = 0xE48BFF5A;
 pub const UF2_RP2350_ARM_NS_FAMILY_ID: u32 = 0xE48BFF5B;
 pub const UF2_FAMILY_ID_MAX: u32 = 0xE48BFF5B;
 
-/// USB Module
-pub mod usb;
-pub use usb::{Connection, Picoboot};
+mod connection;
+mod picoboot;
+mod transport;
+#[cfg(test)]
+mod transport_tests;
+pub use connection::Connection;
+pub use picoboot::Picoboot;
+pub use transport::{
+    BoxFuture, Timeouts, Transaction, Transport, TransportError, TransportErrorKind,
+};
 
 /// Command Module
 pub mod cmd;
 pub use cmd::{PicobootCmd, PicobootCmdId, PicobootXCmd};
-
-pub use nusb::Speed;
 
 /// Reader Module
 #[cfg(feature = "reader")]
@@ -208,16 +212,6 @@ impl std::fmt::Display for Target {
             Target::Custom { vid, pid } => {
                 write!(f, "{:04x}:{:04x}", vid, pid)
             }
-        }
-    }
-}
-
-impl From<&nusb::DeviceInfo> for Target {
-    fn from(dev_info: &nusb::DeviceInfo) -> Self {
-        match (dev_info.vendor_id(), dev_info.product_id()) {
-            (PICOBOOT_VID, PICOBOOT_PID_RP2040) => Target::Rp2040,
-            (PICOBOOT_VID, PICOBOOT_PID_RP2350) => Target::Rp2350,
-            (vid, pid) => Target::Custom { vid, pid },
         }
     }
 }
@@ -318,94 +312,34 @@ pub enum RebootType {
         disable_msd: bool,
         disable_picoboot: bool,
     },
+    /// Reboot into an image already written to RAM - RP2350 only.  `start`
+    /// and `size` are the RAM region the boot ROM searches for the image.
+    RamImage { start: u32, size: u32 },
 }
 
 /// `picoboot` error type.
 ///
-/// Errors are broken down into:
-/// - USB errors - originating from the underlying `nusb` crate
-/// - PICOBOOT errors - originating from PICOBOOT device or protocol handling
+/// A transport's failure is [`Error::Transport`].  Every other variant comes
+/// from picoboot or the device.
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Hit error enumerating USB devices
-    #[error("Error enumerating USB devices: {0}")]
-    UsbEnumerationError(nusb::Error),
+    /// The transport failed.
+    #[error("{0}")]
+    Transport(TransportError),
 
-    /// Failed to open USB device.
-    #[error("Failed to open target {0}: {1}")]
-    UsbOpenError(Target, nusb::Error),
+    /// [`Picoboot::new()`]'s transport can't tell its target.  Contains the
+    /// transport's description.
+    #[error("Target unknown for {0}")]
+    PicobootTargetUnknown(String),
 
-    /// Failed to claim USB interface.
-    #[error("Failed to claim USB interface on {0}: {1}")]
-    UsbClaimInterfaceFailure(Target, nusb::Error),
-
-    /// Failed to get the descriptor for the active USB configuration.
-    #[error("Failed to get descriptor for active usb configuration on {0}")]
-    UsbNoActiveInterfaceDescriptor(Target),
-
-    /// Failed to get USB bulk endpoints.
-    #[error("Failed to find USB bulk endpoints on {0}")]
-    UsbEndpointsNotFound(Target),
-
-    /// Failed to claim endpoint
-    #[error("Failed to claim USB bulk IN endpoint on {0}: {1}")]
-    UsbInEndpointClaimFailure(Target, nusb::Error),
-
-    /// Failed to claim USB bulk OUT endpoint.
-    #[error("Failed to claim USB bulk OUT endpoint on {0}: {1}")]
-    UsbOutEndpointClaimFailure(Target, nusb::Error),
-
-    /// Failed to clear USB IN address halt.
-    #[error("Failed to clear IN endoint halt on {0}: {1}")]
-    UsbClearInEndpointHaltFailure(Target, nusb::Error),
-
-    /// Failed to clear USB out address halt.
-    #[error("Failed to clear OUT endpoint halt on {0}: {1}")]
-    UsbClearOutEndpointHaltFailure(Target, nusb::Error),
-
-    /// Failed to detach USB kernel driver (linux only).
-    #[cfg(target_os = "linux")]
-    #[error("Failed to detach USB kernel driver for {0}: {1}")]
-    UsbDetachKernelDriverFailure(Target, nusb::Error),
-
-    /// Failed to re-attach USB kernel driver (linux only).
-    #[cfg(target_os = "linux")]
-    #[error("Failed to re-attach USB kernel driver for {0}: {1}")]
-    UsbReattachKernelDriverFailure(Target, nusb::Error),
-
-    /// Failed to read from USB bulk endpoint.
-    #[error("Bulk read failed on {0}: {1}")]
-    UsbReadBulkFailure(Target, nusb::transfer::TransferError),
-
-    /// Read data from USB does not match expected size.
-    #[error("Bulk read did not match expected size on {0}: {1} >= {2}")]
-    UsbReadBulkMismatch(Target, usize, usize),
-
-    /// Failed to write to USB bulk endpoint.
-    #[error("Bulk write failed on {0}: {1}")]
-    UsbWriteBulkFailure(Target, nusb::transfer::TransferError),
-
-    /// Written data to USB does not match expected size.
-    #[error("Bulk write did not match expected size on {0}: {1} != {2}")]
-    UsbWriteBulkMismatch(Target, usize, usize),
+    /// IN data that isn't the length requested.
+    #[error("IN data length on {0}: expected {1} bytes, got {2}")]
+    PicobootInDataLength(Target, usize, usize),
 
     /// No PICOBOOT devices found.
     #[error("No PICOBOOT devices found")]
     PicobootNoDevicesFound,
-
-    /// PICOBOOT get command status from device failed.
-    #[error("PICOBOOT get command status from {0} failed: {1}")]
-    PicobootGetCommandStatusFailure(Target, nusb::transfer::TransferError),
-
-    /// Failed to reset PICOBOOT interface.
-    #[error("Failed to reset PICOBOOT interface: {0}")]
-    PicobootResetInterfaceFailure(Target, nusb::transfer::TransferError),
-
-    /// PICOBOOT interface not found on a device purporting to be an RP2040 or
-    /// RP2350 in BOOTSEL mode.
-    #[error("PICOBOOT interface not found on {0}")]
-    PicobootInterfaceNotFound(Target),
 
     /// Command is not allowed for this PICOBOOT target.
     #[error("PICOBOOT command not allowed for {0}: {1}")]
@@ -456,6 +390,72 @@ pub enum Error {
     /// Missing data for a picobootx command that transmits data.
     #[error("Missing buffer for data transfer picobootx command on {0}: {1}")]
     PicobootXCmdDataMissing(Target, u8),
+
+    /// The device reported that a command failed, in a status that arrived
+    /// with the command's reply.  [`Connection::get_command_status()`] returns
+    /// the same status until the interface is reset.
+    #[error("PICOBOOT command failed on {0}: {status}", status = status_text(.1))]
+    PicobootCmdFailure(Target, cmd::PicobootStatusCmd),
+}
+
+/// A status's name in the RP2350 datasheet, or its number where the datasheet
+/// doesn't define it.
+fn status_text(status: &cmd::PicobootStatusCmd) -> String {
+    use cmd::PicobootStatus::*;
+    let name = match status.try_status_code() {
+        Some(Ok) => "OK",
+        Some(UnknownCmd) => "UNKNOWN_CMD",
+        Some(InvalidCmdLength) => "INVALID_CMD_LENGTH",
+        Some(InvalidTransferLength) => "INVALID_TRANSFER_LENGTH",
+        Some(InvalidAddress) => "INVALID_ADDRESS",
+        Some(BadAlignment) => "BAD_ALIGNMENT",
+        Some(InterleavedWrite) => "INTERLEAVED_WRITE",
+        Some(Rebooting) => "REBOOTING",
+        Some(UnknownError) => "UNKNOWN_ERROR",
+        Some(InvalidState) => "INVALID_STATE",
+        Some(NotPermitted) => "NOT_PERMITTED",
+        Some(InvalidArg) => "INVALID_ARG",
+        Some(BufferTooSmall) => "BUFFER_TOO_SMALL",
+        Some(PreconditionNotMet) => "PRECONDITION_NOT_MET",
+        Some(ModifiedData) => "MODIFIED_DATA",
+        Some(InvalidData) => "INVALID_DATA",
+        Some(NotFound) => "NOT_FOUND",
+        Some(UnsupportedModification) => "UNSUPPORTED_MODIFICATION",
+        None => return format!("unknown status code {}", status.raw_status_code()),
+    };
+    name.to_string()
+}
+
+#[cfg(test)]
+mod status_text_tests {
+    use super::*;
+
+    fn failure(code: u32) -> String {
+        let mut bytes = [0u8; 16];
+        bytes[4..8].copy_from_slice(&code.to_le_bytes());
+        Error::PicobootCmdFailure(Target::Rp2350, cmd::PicobootStatusCmd::from(bytes)).to_string()
+    }
+
+    #[test]
+    fn a_failure_displays_the_status_name() {
+        assert_eq!(
+            failure(9),
+            "PICOBOOT command failed on RP2350: INVALID_STATE"
+        );
+        assert_eq!(failure(1), "PICOBOOT command failed on RP2350: UNKNOWN_CMD");
+        assert_eq!(
+            failure(17),
+            "PICOBOOT command failed on RP2350: UNSUPPORTED_MODIFICATION"
+        );
+    }
+
+    #[test]
+    fn a_status_the_datasheet_doesnt_define_displays_its_number() {
+        assert_eq!(
+            failure(42),
+            "PICOBOOT command failed on RP2350: unknown status code 42"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -482,19 +482,18 @@ mod target_tests {
     #[test]
     fn a_custom_target_admits_it_has_no_geometry() {
         let t = Target::Custom {
-            vid: 0x1209,
-            pid: 0xf542,
+            vid: 0x1234,
+            pid: 0x5678,
         };
         assert_eq!(t.flash_end(), None);
         assert_eq!(t.default_stack_pointer(), None);
     }
 
     /// A custom target reports the ids it was given, including when they happen
-    /// to be the standard pair.  Only `From<&DeviceInfo>` promotes those to a
-    /// known target, so a `Custom` built by hand must stay what it was built as.
+    /// to be the standard pair.
     #[test]
     fn a_custom_target_reports_the_ids_it_was_given() {
-        for (vid, pid) in [(0x1209u16, 0xf542u16), (PICOBOOT_VID, PICOBOOT_PID_RP2350)] {
+        for (vid, pid) in [(0x1234u16, 0x5678u16), (PICOBOOT_VID, PICOBOOT_PID_RP2350)] {
             let t = Target::Custom { vid, pid };
             assert_eq!(t.vid(), vid);
             assert_eq!(t.pid(), pid);

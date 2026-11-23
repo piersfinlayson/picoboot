@@ -4,6 +4,7 @@
 
 #![cfg(feature = "reader")]
 
+use crate::cmd::PicobootStatusCmd;
 use crate::{Picoboot, Target};
 use airfrog_rpc::io::Reader;
 use log::debug;
@@ -17,6 +18,7 @@ pub struct PicobootReader {
     /// Whether the device is an RP2350, whose flash reads need an EXIT_XIP
     /// after an interface reset.
     rp2350: bool,
+    last_status: Option<PicobootStatusCmd>,
 }
 
 impl PicobootReader {
@@ -35,7 +37,17 @@ impl PicobootReader {
             Ok(status) => debug!("PicobootReader: command status after reset: {:?}", status),
             Err(e) => debug!("PicobootReader: failed to get command status after reset: {e}"),
         }
-        Ok(Self { picoboot, rp2350 })
+        Ok(Self {
+            picoboot,
+            rp2350,
+            last_status: None,
+        })
+    }
+
+    /// The device's command status for the last read that failed.  `None`
+    /// before a read fails, or where the status couldn't be read.
+    pub fn last_status(&self) -> Option<&PicobootStatusCmd> {
+        self.last_status.as_ref()
     }
 }
 
@@ -67,6 +79,8 @@ impl Reader for PicobootReader {
             }
             Err(e) => {
                 debug!("Error reading from device: {e}");
+                // The reset clears the device's status.
+                self.last_status = conn.get_command_status().await.ok();
                 conn.reset_interface().await.map_err(|e| e.to_string())?;
                 // A reset during a command aborts the flash on RP2350, so
                 // later reads need another EXIT_XIP.

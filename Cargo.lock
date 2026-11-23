@@ -525,18 +525,29 @@ checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 
 [[package]]
 name = "picoboot"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "airfrog-rpc",
  "deku",
  "env_logger",
  "log",
  "nusb",
- "rustix",
- "serde",
+ "picoboot-nusb",
  "thiserror",
  "tokio",
  "uf2-decode",
+]
+
+[[package]]
+name = "picoboot-nusb"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "nusb",
+ "picoboot",
+ "rustix",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -651,16 +662,6 @@ name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
-
-[[package]]
-name = "serde"
-version = "1.0.228"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
-dependencies = [
- "serde_core",
- "serde_derive",
-]
 
 [[package]]
 name = "serde_core"
